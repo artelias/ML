@@ -1,0 +1,1306 @@
+---
+title: "Prova 2 - Machine Learning"
+author: "Arthur Henrique Elias de Lima"
+date: last-modified
+date-format: "DD MMM, YYYY"
+
+format: 
+  html:
+    theme: lux
+    code-fold: true
+    code-tools: true
+    code-block-bg: true
+    code-block-border-left: "#9400D3"
+    highlight-style: github
+    code-link: true
+    toc: true 
+    toc-title: Sumário
+    toc-location: left
+    toc-depth: 3
+    number-depth: 4
+    smooth-scroll: true
+    
+self-contained: true
+page-layout: full
+editor: source
+---
+# Primeira questão 
+
+1. Uma regressão logística para um problema de Countries.and.areasificação binário Use o kaggle para encontrar uma base de dados. Discuta e construa uma curva ROC e comente a performance do modelo segunda a acurácia; (valerá 3 pontos)
+```{r}
+# Carrega todas as bibliotecas necessárias
+pacotes <- c("tidymodels", "rpart", "rpart.plot", "glue", "dplyr", "ggplot2", "patchwork","parsnip")
+
+# Instala os pacotes que não estão instalados
+pacotes_nao_instalados <- pacotes[!(pacotes %in% installed.packages()[,"Package"])]
+if(length(pacotes_nao_instalados) > 0) {
+  install.packages(pacotes_nao_instalados)
+}
+
+# Carrega as bibliotecas
+lapply(pacotes, library, character.only = TRUE)
+
+
+tidymodels::tidymodels_prefer()
+```
+
+```{r}
+setwd("C:\\Users\\arthu\\Documents\\Curso Estatístias\\p7\\python\\ML\\Projeto")
+saude=read.csv("diabetes_test.csv")
+saude$Resultado= factor(saude$Resultado,levels = c("1","0"), labels = c("Diabetico", "normal"))
+
+
+```
+
+Este conjunto de dados contém transações de cartão de crédito feitas por titulares de cartões europeus no ano de 2023. Ele compreende mais de 550.000 registros e os dados foram anonimizados para proteger os titulares dos cartões; identidades. O objetivo principal deste conjunto de dados é facilitar o desenvolvimento de algoritmos e modelos de detecção de fraudes para identificar transações potencialmente fraudulentas.
+
+V1-V28: recursos anônimos que representam vários atributos da transação (por exemplo, horário, local etc.)
+Valor: o valor da transação
+Classe: rótulo binário que indica se a transação é fraudulenta (1) ou não (0)
+
+
+```{r}
+splitted <- initial_split(saude, prop = 0.80, strata = Resultado)
+treinamento <- training(splitted)
+teste <- testing(splitted)
+```
+
+
+```{r}
+receita <- recipe(Resultado ~ ., data = treinamento) %>%
+  recipes::step_dummy(all_nominal(), -all_outcomes()) %>% 
+  recipes::step_zv(all_numeric(), -all_outcomes()) %>% 
+  recipes::step_corr(all_predictors(), threshold = 0.7, method = "spearman")
+```
+
+
+```{r}
+log_reg <-
+  logistic_reg(penalty = tune(), mixture = tune()) %>% # logistic regression
+  set_engine(engine = "glmnet") %>%
+  set_mode("classification")
+
+wf <- workflow_set(
+  preproc = list(receita),
+  models = list(modelo_log = log_reg)
+) %>%
+  mutate(wflow_id = gsub("(recipe_)", "", wflow_id))
+
+set.seed(2023)
+vfold <- vfold_cv(treinamento,
+                     v = 5,
+                     strata = Resultado) 
+
+grid_control <- control_grid(
+  save_pred = TRUE,
+  save_workflow = TRUE,
+  parallel_over = "resamples"
+)
+
+metrica <- metric_set(accuracy, roc_auc)
+
+
+```
+
+```{r}
+tunagem <- 
+  wf %>% 
+  workflow_map(
+    verbose = TRUE,
+    seed = 2023,
+    resamples = vfold,
+    control = grid_control,
+    metrics = metrica,
+    grid = 10L
+  )
+```
+
+
+```{r}
+best = tunagem %>% 
+  extract_workflow_set_result("modelo_log") %>% 
+  select_best(metric = "roc_auc")
+
+best %>%
+  knitr::kable()
+```
+
+```{r}
+test <-  tunagem %>% 
+   extract_workflow("modelo_log") %>% 
+   finalize_workflow(best) %>% 
+   last_fit(split = splitted,
+            metrics = metric_set(accuracy, roc_auc))
+```
+
+```{r}
+predictions <- test %>%
+  collect_predictions()
+
+matriz_confusão <- predictions %>% 
+  conf_mat(Resultado, .pred_class)
+
+round(prop.table(matriz_confusão$table),2) %>%
+  knitr::kable()
+```
+
+
+```{r}
+curva_roc <-  roc_curve(predictions,Resultado,.pred_normal)
+roc_auc(predictions, Resultado, .pred_normal)
+autoplot(curva_roc)
+```
+
+
+
+# Segunda questão 
+
+2. Refaçam todos os exercícios dos slides; (valerá 2 pontos)
+
+
+## Primeira parte da diciplina
+
+1-Explique resumidamente o que é aprendizagem supervisionada e não-supervisionada. Cite um problema de aprendizagem supervisionada e um outro de aprendizagem não-supervisionada.
+
+
+Supervisionada utiliza conjuntos de dados rotulados, sem a necessidade de uma pessoa externa para compreender o assunto.
+
+
+Não supervisionada é quando não temos a resposta correta do conteudo, ou seja, temos a necessidade de pessoas externas para entendimento do assunto. 
+
+
+2-Considere o conjunto de dados de Expectativa de vida versus PIB per Capita, disponível aqui. Considere a função gg, da seguinte forma:
+
+
+com p \in \{1, 2, ..., 50\} p∈{1,2,...,50}. Utilizando o erro quadrático médio observado, sem fazer nenhuma estratégia de divisão dos dados, implemente um código em R para checar qual o melhor modelo.
+
+```{r}
+setwd("C:\\Users\\arthu\\Documents\\Curso Estatístias\\p7\\python\\ML\\Projeto")
+load("C:\\Users\\arthu\\Documents\\Curso Estatístias\\p7\\python\\ML\\Projeto\\dados_expectativa_renda.RData")
+set.seed(2023)
+library(rsample)
+library(dplyr)
+library(ggplot2)
+library(tidymodels)
+library(tibble)
+library(purrr)
+library(patchwork)
+library(glmnet)
+tidymodels::tidymodels_prefer()
+
+```
+
+
+```{r message=FALSE, warning=FALSE}
+dados <- dados_expectativa_renda[,-1]
+
+dados_splitted <- initial_split(dados)
+
+cross_validation <- vfold_cv(training(dados_splitted), v = 50)
+
+eqm <- NULL
+
+for(i in 1:50){
+  data_temp <- cross_validation$splits[[i]] %>% analysis()
+  fit_temp <- lm(data_temp$LifeExpectancy~., data_temp)
+  
+  Validatiion_temp <- cross_validation$splits[[i]] %>% assessment()
+  
+  eqm[i] <-  apply((Validatiion_temp[,1] - predict(fit_temp, Validatiion_temp))^2, MARGIN = 2, mean)
+  
+  if(i > 1){
+    data_temp <- cross_validation$splits[[i]] %>% analysis()
+    
+    for(j in 2:i){
+      assign(paste0("PIB per Capita",j), data_temp$GDPercapita^j)
+      data_temp <- cbind(data_temp, get(paste0("PIB per Capita", j)))
+    }
+    colnames(data_temp) <- c("Expectativa de vida", "PIB per Capita", paste0("PIB per Capita", 2:i))
+    
+    fit_temp <- lm(data_temp$`Expectativa de vida`~. , data = data_temp)
+    
+    Validatiion_temp <- cross_validation$splits[[i]] %>% assessment() 
+    
+    for(j in 2:i){
+      assign(paste0("PIB per Capita", j), Validatiion_temp$GDPercapita^j)
+      Validatiion_temp <- cbind(Validatiion_temp, get(paste0("PIB per Capita", j)))
+    }
+    colnames(Validatiion_temp) <- c("Expectativa de vida", "PIB per Capita", paste0("PIB per Capita", 2:i))
+    
+    eqm[i] <- mean((Validatiion_temp[,1] - predict(fit_temp, Validatiion_temp))^2)
+  }
+}
+v=which(eqm == min(eqm))
+print(v)        
+
+```
+
+3-Explique qual o motivo que faz com que o Erro Quadrático Médio - EQM para avaliar o desempenho de um modelo é ruim quando não adotamos nenhuma estratégia de divisão do conjunto de dados em treinamento e teste.
+
+
+4-Com suas palavras, explique o dilema de balanço entre víes e variância.
+
+5-Refaça o exercício do polinômio, utilizando a estratégia de data splitting, em que divide-se o conjunto de dados em treinamento e teste. Utilize o conjunto de teste para calcular a estimativa do risco, usando o EQM.
+
+k-folds cross-validation utilizando data splitting com k =50
+```{r message=FALSE, warning=FALSE}
+dados <- dados_expectativa_renda[,-1]
+
+dados_splitted <- initial_split(dados, prop = 3/4)
+train_data <- training(dados_splitted)
+test_data <- testing(dados_splitted)
+
+cross_validation <- vfold_cv(train_data, v = 50)
+
+eqm <- NULL
+
+for(i in 1:50){
+  data_temp <- cross_validation$splits[[i]] %>% analysis()
+  fit_temp <- lm(data_temp$LifeExpectancy~., data_temp)
+  
+  Validatiion_temp <- cross_validation$splits[[i]] %>% assessment()
+  
+  eqm[i] <-  apply((Validatiion_temp[,1] - predict(fit_temp, Validatiion_temp))^2, MARGIN = 2, mean)
+  
+  if(i > 1){
+    data_temp <- cross_validation$splits[[i]] %>% analysis()
+    
+    for(j in 2:i){
+      assign(paste0("PIB per Capita",j), data_temp$GDPercapita^j)
+      data_temp <- cbind(data_temp, get(paste0("PIB per Capita", j)))
+    }
+    colnames(data_temp) <- c("Expectativa de vida", "PIB per Capita", paste0("PIB per Capita", 2:i))
+    
+    fit_temp <- lm(data_temp$`Expectativa de vida`~. , data = data_temp)
+    
+    Validatiion_temp <- cross_validation$splits[[i]] %>% assessment() 
+    
+    for(j in 2:i){
+      assign(paste0("PIB per Capita", j), Validatiion_temp$GDPercapita^j)
+      Validatiion_temp <- cbind(Validatiion_temp, get(paste0("PIB per Capita", j)))
+    }
+    colnames(Validatiion_temp) <- c("Expectativa de vida", "PIB per Capita", paste0("PIB per Capita", 2:i))
+    
+    eqm[i] <- mean((Validatiion_temp[,1] - predict(fit_temp, Validatiion_temp))^2)
+  }
+}
+
+v=which(eqm == min(eqm))
+print(v)        
+```
+
+
+6- Ainda considerando o exercício do polinômio, implemente uma estratégia de leave-one-out cross-validation e selecione o melhor modelo minimizando a função de risco.
+
+
+Leave-one-out cross-validation;
+```{r message=FALSE, warning=FALSE}
+dados <- dados_expectativa_renda[,-1]
+
+cross_validation <- loo_cv(dados)
+
+eqm <- NULL
+
+for(i in 1:50){
+  data_temp <- cross_validation$splits[[i]] %>% analysis()
+  fit_temp <- lm(data_temp$LifeExpectancy~., data_temp)
+  
+  Validatiion_temp <- cross_validation$splits[[i]] %>% assessment()
+  
+  eqm[i] <-  apply((Validatiion_temp[,1] - predict(fit_temp, Validatiion_temp))^2, MARGIN = 2, mean)
+  
+  if(i > 1){
+    data_temp <- cross_validation$splits[[i]] %>% analysis()
+    
+    for(j in 2:i){
+      assign(paste0("PIB per Capita",j), data_temp$GDPercapita^j)
+      data_temp <- cbind(data_temp, get(paste0("PIB per Capita", j)))
+    }
+    colnames(data_temp) <- c("Expectativa de vida", "PIB per Capita", paste0("PIB per Capita", 2:i))
+    
+    fit_temp <- lm(data_temp$`Expectativa de vida`~. , data = data_temp)
+    
+    Validatiion_temp <- cross_validation$splits[[i]] %>% assessment() 
+    
+    for(j in 2:i){
+      assign(paste0("PIB per Capita", j), Validatiion_temp$GDPercapita^j)
+      Validatiion_temp <- cbind(Validatiion_temp, get(paste0("PIB per Capita", j)))
+    }
+    colnames(Validatiion_temp) <- c("Expectativa de vida", "PIB per Capita", paste0("PIB per Capita", 2:i))
+    
+    eqm[i] <- mean((Validatiion_temp[,1] - predict(fit_temp, Validatiion_temp))^2)
+  }
+}
+
+v=which(eqm == min(eqm))
+print(v)      
+```
+
+7- Por fim, considerando o exercício do polinômio, rafaça-o utilizando um procedimento de kk-fold cross-validation. Considere k = 5k=5. Dica: considere utiliza a biblioteca rsample.
+
+
+k-folds cross-validation utilizando data splitting com k = 5
+```{r message=FALSE, warning=FALSE}
+dados <- dados_expectativa_renda[,-1]
+
+dados_splitted <- initial_split(dados, prop = 3/4)
+train_data <- training(dados_splitted)
+test_data <- testing(dados_splitted)
+
+cross_validation <- vfold_cv(train_data, v = 5)
+
+eqm <- NULL
+
+for(i in 1:5){
+  data_temp <- cross_validation$splits[[i]] %>% analysis()
+  fit_temp <- lm(data_temp$LifeExpectancy~., data_temp)
+  
+  Validatiion_temp <- cross_validation$splits[[i]] %>% assessment()
+  
+  eqm[i] <-  apply((Validatiion_temp[,1] - predict(fit_temp, Validatiion_temp))^2, MARGIN = 2, mean)
+  
+  if(i > 1){
+    data_temp <- cross_validation$splits[[i]] %>% analysis()
+    
+    for(j in 2:i){
+      assign(paste0("PIB per Capita",j), data_temp$GDPercapita^j)
+      data_temp <- cbind(data_temp, get(paste0("PIB per Capita", j)))
+    }
+    colnames(data_temp) <- c("Expectativa de vida", "PIB per Capita", paste0("PIB per Capita", 2:i))
+    
+    fit_temp <- lm(data_temp$`Expectativa de vida`~. , data = data_temp)
+    
+    Validatiion_temp <- cross_validation$splits[[i]] %>% assessment() 
+    
+    for(j in 2:i){
+      assign(paste0("PIB per Capita", j), Validatiion_temp$GDPercapita^j)
+      Validatiion_temp <- cbind(Validatiion_temp, get(paste0("PIB per Capita", j)))
+    }
+    colnames(Validatiion_temp) <- c("Expectativa de vida", "PIB per Capita", paste0("PIB per Capita", 2:i))
+    
+    eqm[i] <- mean((Validatiion_temp[,1] - predict(fit_temp, Validatiion_temp))^2)
+  }
+}
+
+v=which(eqm == min(eqm))
+print(v)        
+```
+
+ - Vinhos
+
+
+```{r}
+
+vinhos <- read.csv("C:/Users/arthu/Documents/Curso Estatístias/p7/python/ML/Projeto/winequality-red.csv")
+skimr::skim(vinhos)
+```
+```{r}
+colnames(vinhos) <- c(paste0("x", 1:11), "y")
+#Data split
+vinho <- initial_split(vinhos, prop = 3/4)
+
+trainer <- training(vinho)
+tester <- testing(vinho)
+
+#Setting Engine
+modelo_mmo <- 
+  linear_reg(penalty = 0, mixture = 0) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+
+modelo_ridge <- 
+  linear_reg(penalty = tune::tune(), mixture = 0) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+
+modelo_lasso <- 
+  parsnip::linear_reg(penalty = tune::tune(), mixture = 1) %>% 
+  set_mode("regression") %>% 
+  parsnip::set_engine("glmnet")
+
+modelo_elastic <- 
+  parsnip::linear_reg(penalty = tune::tune(), mixture = tune::tune()) %>% 
+  set_mode("regression") %>% 
+  parsnip::set_engine("glmnet")
+
+
+#workflow
+all_wf <- 
+  workflow_set(
+    preproc = list(y ~ . ),
+    models = list(mmo = modelo_mmo, ridge = modelo_ridge, lasso = modelo_lasso, elastic = modelo_elastic), 
+    cross = TRUE
+  )
+
+#cross-validation
+set.seed(2023)
+cv <- rsample::vfold_cv(trainer, v = 5L)
+
+#metrics
+metrica <- yardstick::metric_set(rmse)
+
+#tunning
+tunagem <- 
+  all_wf %>%  
+  workflow_map(
+    seed = 2023, 
+    verbose = TRUE,
+    resamples = cv,
+    grid = 50,
+    metrics = metrica
+  )
+```
+
+
+```{r}
+#melhores modelos
+modelos_rank <- tunagem %>% rank_results()
+
+melhor_mmo <- 
+  tunagem %>% 
+  extract_workflow_set_result("formula_mmo") %>% 
+  select_best("rmse")
+
+melhor_ridge <- 
+  tunagem %>% 
+  extract_workflow_set_result("formula_ridge") %>% 
+  select_best("rmse")
+
+melhor_lasso <- 
+  tunagem %>% 
+  extract_workflow_set_result("formula_lasso") %>% 
+  select_best("rmse")
+
+melhor_elastic <- 
+  tunagem %>% 
+  extract_workflow_set_result("formula_elastic") %>% 
+  select_best("rmse")
+
+finalizando_mmo <- 
+  tunagem %>% 
+  extract_workflow("formula_mmo") %>% 
+  finalize_workflow(melhor_mmo) %>% 
+  last_fit(split = vinho)
+
+finalizando_ridge <- 
+  tunagem %>% 
+  extract_workflow("formula_ridge") %>% 
+  finalize_workflow(melhor_ridge) %>% 
+  last_fit(split = vinho)
+
+finalizando_lasso <- 
+  tunagem %>% 
+  extract_workflow("formula_lasso") %>% 
+  finalize_workflow(melhor_lasso) %>% 
+  last_fit(split = vinho)
+
+finalizando_elastic <- 
+  tunagem %>% 
+  extract_workflow("formula_elastic") %>% 
+  finalize_workflow(melhor_elastic) %>% 
+  last_fit(split = vinho)
+```
+
+```{r}
+library(knitr)
+kable(data.frame(row.names = c("MMO", "Ridge", "Lasso", "Elastic"), 
+                        "RMSE" = as.numeric(c((finalizando_mmo  %>%  collect_metrics())[1,3],
+                                              (finalizando_ridge %>% collect_metrics())[1,3],
+                                              (finalizando_lasso %>% collect_metrics())[1,3],
+                                              (finalizando_elastic %>% collect_metrics())[1,3])))
+             
+             
+)
+```
+
+```{r}
+
+
+features <- trainer[,-12] %>% as.matrix()
+ytrainer <- trainer[,12] %>% as.matrix()
+testfeatures <- tester[,-12] %>% as.matrix()
+ytest <- tester[,12] %>% as.matrix()
+
+#MMO
+
+fit <- glmnet(x = features, y = ytrainer, alpha = 0, lambda = 0)
+preditos <- predict(fit, newx = testfeatures)
+eqm_mmo <- mean((preditos - ytest)^2)
+
+
+#Ridge
+cvridge <- cv.glmnet(x = features, y = ytrainer, alpha = 0, nfolds = 5)
+fit2 <- glmnet(x = features, y = ytrainer, alpha = 0)
+preditos_ridge <- predict(fit2, s = cvridge$lambda.1se, newx = testfeatures)
+eqm_ridge <- mean((preditos_ridge - ytest)^2)
+
+#Lasso
+cvlasso <- cv.glmnet(x = features, y = ytrainer, alpha = 1, nfolds = 5)
+fit3 <- glmnet(x = features, y = ytrainer, alpha = 1)
+preditos_lasso <- predict(fit3, s = cvlasso$lambda.1se, newx = testfeatures)
+eqm_lass <- mean((preditos_lasso - ytest)^2)
+
+#Elastic-net
+#Precisamos estipular o melhor alpha através de uma validaçao cruzada.
+#Utilizando 5-folds.
+eqm_elastic <- NULL
+alpha_values <- seq(0.01, 0.999, length.out = 500)
+for(a in alpha_values){
+  cvelastic <- cv.glmnet(x = features, y = ytrainer, alpha = a, nfolds = 5)
+  tempfit <- glmnet(x = features, y = ytrainer, alpha = a)
+  preditos_elastic <- predict(tempfit, s = cvelastic$lambda.1se, newx = testfeatures)
+  eqm_elastic <- c(eqm_elastic, 
+                   mean((preditos_elastic - ytest)^2)) 
+}
+print(min(eqm_elastic))
+
+kable(data.frame(row.names = c("MMO", "Ridge", "Lasso", "Elastic"),
+                        "EQM" = c(eqm_mmo, eqm_ridge, eqm_lass, min(eqm_elastic)),
+                        "RMSE" = sqrt(c(eqm_mmo, eqm_ridge, eqm_lass, min(eqm_elastic)))
+                        )
+)
+```
+
+ - despesas médicas
+
+```{r}
+despesas <- read.csv("insurance.csv")
+
+dados_t <- recipe(charges ~., data = despesas) %>% 
+  step_dummy(all_nominal(), -all_outcomes()) %>% 
+  prep() %>% juice() 
+
+knitr::kable(dados_t %>% head(10), format = "html")
+```
+
+```{r}
+df <- initial_split(dados_t, prop = 3/4)
+
+trainer <- training(df)
+tester <- testing(df)
+
+#Setting Engine
+modelo_mmo <- 
+  linear_reg(penalty = 0, mixture = 0) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+
+modelo_ridge <- 
+  linear_reg(penalty = tune::tune(), mixture = 0) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+
+modelo_lasso <- 
+  parsnip::linear_reg(penalty = tune::tune(), mixture = 1) %>% 
+  set_mode("regression") %>% 
+  parsnip::set_engine("glmnet")
+
+modelo_elastic <- 
+  parsnip::linear_reg(penalty = tune::tune(), mixture = tune::tune()) %>% 
+  set_mode("regression") %>% 
+  parsnip::set_engine("glmnet")
+
+
+#workflow
+all_wf <- 
+  workflow_set(
+    preproc = list(charges ~ . ),
+    models = list(mmo = modelo_mmo, ridge = modelo_ridge, lasso = modelo_lasso, elastic = modelo_elastic), 
+    cross = TRUE
+  )
+
+#cross-validation
+set.seed(2023)
+cv <- rsample::vfold_cv(trainer, v = 5L)
+
+#metrics
+metrica <- yardstick::metric_set(rmse)
+
+#tunning
+tunagem <- 
+  all_wf %>%  
+  workflow_map(
+    seed = 2023, 
+    verbose = TRUE,
+    resamples = cv,
+    grid = 50,
+    metrics = metrica
+  )
+```
+```{r}
+modelos_rank <- tunagem %>% rank_results()
+
+melhor_mmo <- 
+  tunagem %>% 
+  extract_workflow_set_result("formula_mmo") %>% 
+  select_best("rmse")
+
+melhor_ridge <- 
+  tunagem %>% 
+  extract_workflow_set_result("formula_ridge") %>% 
+  select_best("rmse")
+
+melhor_lasso <- 
+  tunagem %>% 
+  extract_workflow_set_result("formula_lasso") %>% 
+  select_best("rmse")
+
+melhor_elastic <- 
+  tunagem %>% 
+  extract_workflow_set_result("formula_elastic") %>% 
+  select_best("rmse")
+
+finalizando_mmo <- 
+  tunagem %>% 
+  extract_workflow("formula_mmo") %>% 
+  finalize_workflow(melhor_mmo) %>% 
+  last_fit(split = df)
+
+finalizando_ridge <- 
+  tunagem %>% 
+  extract_workflow("formula_ridge") %>% 
+  finalize_workflow(melhor_ridge) %>% 
+  last_fit(split = df)
+
+finalizando_lasso <- 
+  tunagem %>% 
+  extract_workflow("formula_lasso") %>% 
+  finalize_workflow(melhor_lasso) %>% 
+  last_fit(split = df)
+
+finalizando_elastic <- 
+  tunagem %>% 
+  extract_workflow("formula_elastic") %>% 
+  finalize_workflow(melhor_elastic) %>% 
+  last_fit(split = df)
+
+
+knitr::kable(data.frame(row.names = c("MMO", "Ridge", "Lasso", "Elastic"), 
+                        "RMSE" = as.numeric(c((finalizando_mmo  %>%  collect_metrics())[1,3],
+                                              (finalizando_ridge %>% collect_metrics())[1,3],
+                                              (finalizando_lasso %>% collect_metrics())[1,3],
+                                              (finalizando_elastic %>% collect_metrics())[1,3])))
+)
+
+```
+
+seleção de modelos
+```{r}
+data_temp <- data.frame(ychapeu_mmo = (finalizando_mmo %>% collect_predictions())[2],
+                        ychapeu_ridge = (finalizando_ridge %>% collect_predictions())[2],
+                        ychapeu_lasso = (finalizando_lasso %>% collect_predictions())[2],
+                        ychapeu_elastic = (finalizando_elastic %>% collect_predictions())[2],
+                        y = (finalizando_elastic %>% collect_predictions())[4]
+)
+
+colnames(data_temp) <- c("ychapeu_mmo", "ychapeu_ridge", "ychapeu_lasso", "ychapeu_elastic", "y")
+data_temp <- as_tibble(data_temp)
+
+
+g1 <- ggplot(data_temp, aes(x = ychapeu_mmo, y = y)) +
+  geom_point() + geom_line(aes(y = ychapeu_mmo), colour = "#191970", size = 1) +
+  labs(title = "Modelo MMO", subtitle = "y_ajustado vs y_real")
+
+g2 <- ggplot(data_temp, aes(x = ychapeu_ridge, y = y)) +
+  geom_point() + geom_line(aes(y = ychapeu_ridge), colour = "#4169E1", size = 1) +
+  labs(title = "Modelo ridge", subtitle = "y_ajustado vs y_real")
+
+g3 <- ggplot(data_temp, aes(x = ychapeu_lasso, y = y)) +
+  geom_point() + geom_line(aes(y = ychapeu_lasso), colour = "orange", size = 1) +
+  labs(title = "Modelo lasso", subtitle = "y_ajustado vs y_real")
+
+g4 <- ggplot(data_temp, aes(x = ychapeu_elastic, y = y)) +
+  geom_point() + geom_line(aes(y = ychapeu_elastic), colour = "red", size = 1) +
+  labs(title = "Modelo elastic", subtitle = "y_ajustado vs y_real")
+
+
+(g1 + g2) / (g3 + g4)
+```
+
+
+
+# Segunda parte da diciplina 
+
+
+```{r message=FALSE, warning=FALSE}
+set.seed(23)
+# Carrega todas as bibliotecas necessárias
+pacotes <- c("tidymodels", "rpart", "rpart.plot", "glue", "dplyr", "ggplot2", "patchwork","parsnip")
+
+# Instala os pacotes que não estão instalados
+pacotes_nao_instalados <- pacotes[!(pacotes %in% installed.packages()[,"Package"])]
+if(length(pacotes_nao_instalados) > 0) {
+  install.packages(pacotes_nao_instalados)
+}
+
+# Carrega as bibliotecas
+lapply(pacotes, library, character.only = TRUE)
+
+
+tidymodels::tidymodels_prefer()
+```
+
+### Primeiro exercicios(slide 161):
+
+```{r}
+performace_alunos <- read.csv("~/Curso Estatístias/p7/python/ML/prova 2/Student_Performance.csv")
+nomes_em_portugues <- c("Horas_Estudadas", "Notas_Anteriores", "Atividades_Extracurriculares", 
+                        "Horas_de_Sono", "Exercicios_de_Amostra_Praticados", "Indice_de_Desempenho")
+colnames(performace_alunos) <- nomes_em_portugues
+names(performace_alunos)
+```
+
+```{r}
+visdat::vis_dat(performace_alunos)
+```
+Não temos NA na nossa base, vamos forçar alguns NA para atividade
+
+```{r}
+criar_na_aleatoriamente <- function(dados, proporcao_na = 0.10) {
+  dados1 <- dados
+  
+  num_colunas <- sample(1:ncol(dados1), 1)
+  
+  num_obs_com_na <- floor(proporcao_na * nrow(dados1))
+  
+  colunas_com_na <- sample(1:ncol(dados1), num_colunas)
+  
+  indices_com_na <- sample(1:nrow(dados1), num_obs_com_na)
+  
+  for (coluna in colunas_com_na) {
+    dados1[indices_com_na, coluna] <- NA
+  }
+  
+  return(dados1)
+}
+
+dados1 <- criar_na_aleatoriamente(performace_alunos)
+```
+aplicamos 10% de Na aleatoriamente.
+
+```{r}
+dados1 |> 
+  dplyr::glimpse()
+```
+
+#### Iniciando receita 
+```{r}
+student_split  <- initial_split(dados1, prop = 0.9, strata = Indice_de_Desempenho )
+treinamento <- training(student_split)
+teste <- testing(student_split)
+```
+
+
+```{r}
+receita <- recipe(formula = Indice_de_Desempenho ~ ., data = dados1) %>%
+  step_impute_knn(all_predictors(), 
+                  impute_with =  c("Notas_Anteriores", "Horas_de_Sono","Indice_de_Desempenho"),
+                  neighbors = 15L) %>% 
+  step_dummy(Atividades_Extracurriculares) %>% 
+  step_YeoJohnson(all_numeric_predictors()) %>% 
+  step_normalize(all_numeric_predictors())
+
+
+
+```
+
+Imputamos dados faltantes usando KNN para variáveis numéricas. Em seguida, transformamos uma variável categórica em dummy. Aplicamos Yeo-Johnson para aproximar os dados de uma distribuição normal e, por fim, normalizamos todas as variáveis para análises mais detalhadas.
+
+#### Construido os modelos
+
+```{r}
+elastic <- 
+  linear_reg(penalty = tune(),
+             mixture = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+
+knn <-
+  nearest_neighbor(
+    neighbors = tune()
+  ) %>% 
+  set_mode("regression") %>% 
+  set_engine("kknn")
+
+svm <-
+  svm_rbf(
+    cost = tune(),
+    rbf_sigma = tune(),
+    margin = tune()
+  ) %>%
+  set_mode("regression") %>%
+  set_engine("kernlab")
+
+all_wf <- 
+   workflow_set(
+     preproc = list(receita),
+     models = list(
+       modelo_knn = knn,
+       modelo_svm = svm,
+       modelo_elastic = elastic
+     ),
+     cross = TRUE
+   ) %>%
+  mutate(wflow_id = gsub("(recipe_)", "", wflow_id))
+
+grid_control <- control_grid(
+  save_pred = TRUE,
+  save_workflow = TRUE,
+  parallel_over = "resamples"
+)
+
+vfold <- 
+  treinamento %>% 
+  vfold_cv(v = 15L, strata = Indice_de_Desempenho)
+
+metrica <- metric_set(rmse)
+```
+
+
+```{r}
+grid_knn <- grid_max_entropy(all_wf %>% extract_parameter_set_dials("modelo_knn"), size = 50L)
+grid_elastic <- grid_max_entropy(all_wf %>% extract_parameter_set_dials("modelo_elastic"), size = 100L)
+grid_svm <-  grid_max_entropy(all_wf %>% extract_parameter_set_dials("modelo_svm"), size = 30L)
+```
+
+```{r}
+all_wf <- 
+  all_wf %>% 
+  option_add(grid = grid_knn, id = 'modelo_knn') %>% 
+  option_add(grid = grid_elastic, id = 'modelo_elastic') %>%  
+  option_add(grid = grid_svm, id = 'modelo_svm')
+
+```
+
+#### Finalização
+
+```{r}
+tunagem <- 
+  all_wf %>% 
+  workflow_map(
+    verbose = TRUE,
+    resamples = vfold,
+    control = grid_control,
+    metrics = metrica
+  )
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+ggplot2::autoplot(
+  tunagem,
+  rank_metric = "rmse",
+  metric = "rmse",
+  select_best = TRUE
+) +
+  ggplot2::labs(title = "Melhor resultado dos modelos") +
+  ylab("rmse") +
+  xlab("Ranking")
+
+```
+
+```{r}
+best = tunagem %>% 
+  extract_workflow_set_result("modelo_svm") %>% 
+  select_best(metric = "rmse")
+
+best %>%
+  knitr::kable(caption = "Hiperparametros")
+```
+
+
+```{r}
+wf_final <- 
+  tunagem %>% extract_workflow("modelo_svm") %>% 
+  finalize_workflow(best)
+
+teste <- 
+  wf_final %>%  
+  last_fit(split = student_split)
+
+knitr::kable(teste$.metrics, caption = "Resultados") 
+```
+#### modell final
+
+```{r}
+modelo_final <- 
+  wf_final |> 
+  fit(dados1)
+```
+
+
+### Atividade 2 (slide 190)
+#### Lendo o banco e tratando os dados
+
+```{r}
+insurance <- read.csv("~/Curso Estatístias/p7/python/ML/prova 2/insurance.csv")
+colnames(insurance) <- c("Idade", "Sexo", "IMC", "Numero_de_Filhos", "Fumante", "Regiao", "Custos_de_Seguro")
+```
+
+
+```{r}
+visdat::vis_dat(insurance)
+```
+
+Não temos NA's na base, 3 categoricas
+
+#### Receita e modelos
+
+```{r}
+insurance_splitted <- initial_split(insurance, prop = 0.9, strata = Custos_de_Seguro)
+treinamento <- training(insurance_splitted)
+teste <- testing(insurance_splitted)
+```
+
+```{r}
+receita <- recipe(formula = Custos_de_Seguro ~ . , insurance) %>% 
+  step_dummy(c(Sexo, Fumante,Regiao), one_hot = TRUE) %>%
+  step_YeoJohnson(all_numeric_predictors()) %>% 
+  step_normalize(all_numeric_predictors())
+
+
+```
+
+A questão pede para transformar região em numérica, entretanto acho que as outras também são interessantes
+
+```{r}
+elastic <- 
+  linear_reg(penalty = tune(),
+             mixture = tune()
+  ) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+
+knn <-
+  nearest_neighbor(
+    neighbors = tune()
+  ) %>% 
+  set_mode("regression") %>% 
+  set_engine("kknn")
+
+svm <-
+  svm_rbf(
+    cost = tune(),
+    rbf_sigma = tune(),
+    margin = tune()
+  ) %>%
+  set_mode("regression") %>%
+  set_engine("kernlab")
+
+all_wf <- 
+   workflow_set(
+     preproc = list(receita),
+     models = list(
+       modelo_knn = knn,
+       modelo_svm = svm,
+       modelo_elastic = elastic
+     ),
+     cross = TRUE
+   ) %>%
+  mutate(wflow_id = gsub("(recipe_)", "", wflow_id))
+
+grid_control <- control_grid(
+  save_pred = TRUE,
+  save_workflow = TRUE,
+  parallel_over = "resamples"
+)
+
+vfold <- 
+  treinamento %>% 
+  vfold_cv(v = 15, strata = Custos_de_Seguro)
+
+metrica <- metric_set(rmse)
+```
+
+```{r}
+grid_knn <- grid_max_entropy(all_wf %>% extract_parameter_set_dials("modelo_knn"), size = 50L)
+grid_elastic <- grid_max_entropy(all_wf %>% extract_parameter_set_dials("modelo_elastic"), size = 100L)
+grid_svm <-  grid_max_entropy(all_wf %>% extract_parameter_set_dials("modelo_svm"), size = 30L)
+```
+
+```{r}
+all_wf <- 
+  all_wf %>% 
+  option_add(grid = grid_knn, id = 'modelo_knn') %>% 
+  option_add(grid = grid_elastic, id = 'modelo_elastic') %>%  
+  option_add(grid = grid_svm, id = 'modelo_svm')
+
+```
+
+#### melhor modelo
+
+```{r}
+tunagem <- 
+  all_wf %>% 
+  workflow_map(
+    verbose = TRUE,
+    seed = 23,
+    resamples = vfold,
+    control = grid_control,
+    metrics = metrica
+  )
+```
+```{r}
+autoplot(
+  tunagem,
+  rank_metric = "rmse",
+  metric = "rmse",
+  select_best = TRUE
+) + 
+  labs(title = "Melhor resultado dos modelos")+ ylab("rmse")+ xlab("Ranking")
+```
+
+SVM é o modelo com menor erro
+
+```{r}
+best = tunagem %>% 
+  extract_workflow_set_result("modelo_svm") %>% 
+  select_best(metric = "rmse")
+
+best %>%
+  knitr::kable(caption = "Hiperparametros")
+
+
+wf_final <- 
+  tunagem %>% extract_workflow("modelo_svm") %>% 
+  finalize_workflow(best)
+
+teste <- 
+  wf_final %>%  
+  last_fit(split = insurance_splitted)
+
+knitr::kable(teste$.metrics, caption = "Resultados") 
+```
+
+```{r}
+modelo_final <- 
+  wf_final |> 
+  fit(insurance)
+```
+
+```{r}
+modelo_final
+```
+
+```{r}
+y_predito <- predict(modelo_final, new_data = insurance)
+
+dados_predicao <- data.frame(y_real = insurance$Custos_de_Seguro, y_predito = y_predito)
+
+ggplot(dados_predicao, aes(x = y_real, y = .pred)) +
+  geom_point() +
+  geom_line(aes(y = y_real), color = "red", size = 1) +
+  labs(title = "Modelo SVM", subtitle = "y_ajustado vs y_real")
+
+
+```
+
+### Terceiro exercicio (slide )
+
+```{r}
+arvore <- function(n , complexidade, sigma) {
+
+  X <- runif(n, 0, 10)
+  Y <- sin(X) + rnorm(n, 0, sigma)
+  
+  modelo <- rpart(Y ~ X, control = rpart.control(cp = complexidade))
+  
+  X_seno <- seq(0, 10, length.out = 100)  
+  Y_predito <- predict(modelo, newdata = data.frame(X = X_seno))
+  
+dados <- data.frame(X = X, Y = Y)
+  ggplot() +
+    geom_point(data = dados, aes(x = X, y = Y), color = "blue", shape = 19) +
+    geom_line(data = data.frame(X = X_seno, Y = Y_predito), aes(x = X, y = Y), color = "red", size = 2) +
+    labs(x = "X", y = "Y", title = "Modelo de Regressão com Árvore de Decisão", 
+         subtitle = "Parametro de complexidade 0.2")
+
+}
+
+arvore(n=250,complexidade = 0.2,sigma = 0.1)
+
+```
+### exercicio 
+
+```{r}
+arvores_estimativas <- function(n = 250L, complexidade = 0.01, sigma = 0.1, num_arvores ) {
+  resultados <- list()
+
+  for (i in 1:num_arvores) {
+    X <- runif(n, 0, 10)
+    Y <- sin(X) + rnorm(n, 0, sigma)
+    
+    modelo <- rpart(Y ~ X, control = rpart.control(cp = complexidade))
+    
+    X_seno <- seq(0, 10, length.out = 100) 
+    Y_predito <- predict(modelo, newdata = data.frame(X = X_seno))
+    
+    resultados[[i]] <- data.frame(X = X_seno, Y_predito = Y_predito)
+  }
+  
+  p <- ggplot() +
+    theme_minimal() +
+    labs(x = "X", y = "Y", title = "Estimativas das Árvores de Regressão", 
+         subtitle = paste("Complexidade =", complexidade, "| Sigma =", sigma)) +
+    theme(legend.position = "none")
+  
+  for (i in 1:num_arvores) {
+    p <- p + geom_line(data = resultados[[i]], aes(x = X, y = Y_predito), color = "red", size = 0.8, alpha = 0.5)
+  }
+  
+  return(p)
+}
+
+arvores_estimativas(num_arvores = 100)
+
+```
+
+
+# Terceira questão
+
+Construa um modelo para previsão do valor do imóvel. Considere apenas casas e apartamentos. A base de dados obtive via web scraping do município de Salvador. (valerá 5 pontos)
+
+```{r}
+dados <- read.csv("salvador.csv")
+
+
+```
+
+```{r}
+splitted <- initial_split(dados, prop = 0.8, strata = valor)
+treinamento <- training(splitted)
+teste <- testing(splitted)
+```
+
+```{r}
+receita <- recipe(formula = `valor` ~ . , dados) %>% 
+  step_impute_knn(all_predictors(),
+                  impute_with = c("valor", "area", "z_lat", "z_lon"),
+                  neighbors = 15L) %>%
+  step_bin2factor(all_logical_predictors()) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_YeoJohnson(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_zv(all_numeric_predictors()) %>%
+  step_corr(all_numeric_predictors())
+```
+
+
+```{r}
+elastic <- 
+  linear_reg(penalty = tune(),
+             mixture = tune()
+  ) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+
+knn <-
+  nearest_neighbor(
+    neighbors = tune()
+  ) %>% 
+  set_mode("regression") %>% 
+  set_engine("kknn")
+
+
+r_forest <- 
+  rand_forest(mtry = tune(), min_n = tune(), trees = tune()) %>%
+  set_engine(engine = "ranger", importance = "impurity") %>% 
+  set_mode("regression")
+
+
+xgb <- boost_tree(tree_depth = tune(), learn_rate = tune(),
+                        loss_reduction = tune(), min_n = tune(),
+                        sample_size = tune(), trees = tune()) %>% 
+   set_engine(engine = "xgboost") %>% 
+   set_mode("regression")
+
+svm <-
+  svm_rbf(
+    cost = tune(),
+    rbf_sigma = tune(),
+    margin = tune()
+  ) %>%
+  set_mode("regression") %>%
+  set_engine("kernlab")
+
+all_wf <- 
+   workflow_set(
+     preproc = list(receita),
+     models = list(
+       modelo_knn = knn,
+       modelo_svm = svm,
+       modelo_elastic =  elastic,
+       modelo_r_forest= r_forest,
+       
+       modelo_xgb=xgb
+     ),
+     cross = TRUE
+   ) %>%
+  mutate(wflow_id = gsub("(recipe_)", "", wflow_id))
+ 
+
+grid_control <- control_grid(
+  save_pred = TRUE,
+  save_workflow = TRUE,
+  parallel_over = "resamples"
+)
+
+vfold <- 
+  treinamento %>% 
+  vfold_cv(v = 5L, strata = valor)
+
+metrica <- metric_set(rmse)
+```
+
+```{r}
+tunagem <- 
+  all_wf %>% 
+  workflow_map(
+    verbose = TRUE,
+    seed = 2023,
+    resamples = vfold,
+    control = grid_control,
+    grid = 5L,
+    metrics = metrica
+  )
+```
+
+```{r}
+autoplot(
+  tunagem,
+  rank_metric = "rmse",
+  metric = "rmse",
+  select_best = TRUE
+) + 
+  labs(title = "Melhor resultado dos modelos")+ ylab("rmse")+ xlab("Ranking")
+```
+
+
+```{r}
+best = tunagem %>%
+  extract_workflow_set_result("modelo_forest") %>%
+  select_best(metric = "rmse")
+
+best %>%
+  knitr::kable(caption = "Hiperparametros")
+```
+
+```{r}
+ wf_final <- 
+   tunagem %>% extract_workflow("modelo_forest") %>% 
+   finalize_workflow(best)
+ 
+ teste <- 
+   wf_final %>%  
+   last_fit(split = splitted)
+ 
+ knitr::kable(teste$.metrics, caption = "Resultados")
+```
+
+```{r}
+ modelo_final <- 
+   wf_final %>% 
+   fit(dados)
+```
+
